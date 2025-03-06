@@ -21,8 +21,12 @@ class LeakingBucketRateLimiter(
         return queue.offer(Unit)
     }
 
-    fun tickBlocking(duration: Long): Boolean {
-        return queue.offer(Unit, duration, TimeUnit.MILLISECONDS)
+    fun tickBlocking(): Boolean {
+        while (true) {
+            if (queue.offer(Unit, 1, TimeUnit.SECONDS)) {
+                return true
+            }
+        }
     }
 
     private val releaseJob = rateLimiterScope.launch {

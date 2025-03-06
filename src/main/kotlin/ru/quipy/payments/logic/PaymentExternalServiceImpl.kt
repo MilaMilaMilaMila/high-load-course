@@ -51,7 +51,9 @@ class PaymentExternalSystemAdapterImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        if (!rateLimiter.tickBlocking(deadline - paymentStartedAt)) {
+        rateLimiter.tickBlocking()
+        val timeBeforeDeadline = deadline - now() - requestAverageProcessingTime.toMillis() * 2
+        if (timeBeforeDeadline <= 0) {
             paymentESService.update(paymentId) {
                 it.logProcessing(false, now(), transactionId, reason = "Request timeout")
             }
