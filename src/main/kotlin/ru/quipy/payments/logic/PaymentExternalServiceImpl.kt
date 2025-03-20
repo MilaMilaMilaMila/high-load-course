@@ -14,6 +14,8 @@ import java.lang.Long.min
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
+import org.springframework.http.HttpStatus
+import kotlin.math.abs
 
 
 // Advice: always treat time as a Duration
@@ -34,13 +36,14 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
-    private val maxRetries = properties.maxRetries ?: 3 // Add default value if not provided
-    private val retryDelay = properties.retryDelay ?: Duration.ofMillis(500) // Add default value if not provided
+    private val maxRetries = properties.maxRetries
+    private var retryDelay = properties.retryDelay
+    private val rateLimiterDivider: Int = 1100
 
     private val client = OkHttpClient.Builder().build()
 
     private val rateLimiter = CustomRateLimiter(
-        min(rateLimitPerSec.toLong() * requestAverageProcessingTime.toMillis() / 1100, parallelRequests.toLong()),
+        min(rateLimitPerSec.toLong() * requestAverageProcessingTime.toMillis() / rateLimiterDivider, parallelRequests.toLong()),
         requestAverageProcessingTime,
     )
     private val semaphore = Semaphore(parallelRequests)
@@ -105,8 +108,23 @@ class PaymentExternalSystemAdapterImpl(
                         }
 
                         when (response.code) {
-                            400, 401, 403, 404, 405 -> {
+                            HttpStatus.BAD_REQUEST.value(),
+                            HttpStatus.UNAUTHORIZED.value(),
+                            HttpStatus.FORBIDDEN.value(),
+                            HttpStatus.NOT_FOUND.value(),
+                            HttpStatus.METHOD_NOT_ALLOWED.value() -> {
                                 throw RuntimeException("Client error code: ${response.code}")
+                            }
+                            HttpStatus.TOO_MANY_REQUESTS.value() -> {
+                                retryDelay.multipliedBy(2L)
+                            }
+                            HttpStatus.INTERNAL_SERVER_ERROR.value(), HttpStatus.SERVICE_UNAVAILABLE.value() -> {
+                                val retryAfter = response.headers["Retry-After"]?.toLongOrNull()
+                                if (retryAfter != null) {
+                                    retryDelay = Duration.ofMillis( retryAfter.toLong() * 1000L)
+                                } else {
+
+                                }
                             }
                             else -> { /* no op */ }
                         }
@@ -128,8 +146,15 @@ class PaymentExternalSystemAdapterImpl(
 
                 if (!body.result && attempt < maxRetries) {
                     logger.warn("[$accountName] Retrying payment request for txId: $transactionId, attempt $attempt/$maxRetries")
-                    val newRetry: Duration = retryDelay.multipliedBy(attempt.toLong())
-                    Thread.sleep(newRetry.toMillis())
+                    val add = (retryDelay.toMillis() * 0.5 * Math.random()).toLong()
+                    var finalDelay = retryDelay.toMillis() + add
+                    if (deadline - now() > 0) {
+                        finalDelay = min(finalDelay, abs(deadline - now()))
+                    } else {
+                        break
+                    }
+
+                    Thread.sleep(finalDelay)
                 }
             } while (!body.result && attempt < maxRetries)
         } finally {
