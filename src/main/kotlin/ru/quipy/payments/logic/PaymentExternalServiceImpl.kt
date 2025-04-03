@@ -227,8 +227,8 @@ class PaymentExternalSystemAdapterImpl(
     private val accountName = properties.accountName
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
-//     private val parallelRequests = properties.parallelRequests
-    private val parallelRequests = 30 // Увеличенное значение для параллельных запросов
+    private val parallelRequests = properties.parallelRequests
+//    private val parallelRequests = 30 // Увеличенное значение для параллельных запросов
 
     private val requestQueue = ConcurrentLinkedQueue<PaymentRequest>()
     private val executor = Executors.newFixedThreadPool(parallelRequests)
@@ -291,13 +291,14 @@ class PaymentExternalSystemAdapterImpl(
         }
 
         var attempt = 0
-        val maxRetries = 5
-        var delay = 1000L
+        val maxRetries = 3
+        var delay = 80L
 
         while (attempt < maxRetries) {
             limiter.tickBlocking()
             val httpRequest = Request.Builder().run {
-                url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=${request.paymentId}&amount=${request.amount}")
+                val requestTimeout = Duration.ofMillis(1250)
+                url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=${request.paymentId}&amount=${request.amount}&timeout=${requestTimeout}")
                 post(emptyBody)
             }.build()
 
@@ -336,7 +337,7 @@ class PaymentExternalSystemAdapterImpl(
                             logger.error("[$accountName] Payment failed for txId: $transactionId, code: ${response.code}")
                             val retryAfter = response.headers["Retry-After"]?.toLongOrNull()
                             retryAfter?.let {
-                                delay = retryAfter * 1000
+                                delay = retryAfter * 4
                             }
                         }
                         HttpStatus.INTERNAL_SERVER_ERROR -> {
@@ -368,13 +369,13 @@ class PaymentExternalSystemAdapterImpl(
 
             attempt++
             if (attempt < maxRetries) {
-                val jitter = (delay * 0.3 * Math.random()).toLong()
+                val jitter = (delay * 0.2 * Math.random()).toLong()
                 val finalDelay = min(delay + jitter, abs(request.deadline - now()))
 
                 val adjustedDelay = finalDelay + jitter
 
                 logger.info("Retrying in ${adjustedDelay}ms (attempt ${attempt + 1})")
-                Thread.sleep(adjustedDelay)
+                Thread.sleep(delay)
             }
             // if (attempt < maxRetries) {
             //     val finalDelay = min(delay, abs(request.deadline - now()))
