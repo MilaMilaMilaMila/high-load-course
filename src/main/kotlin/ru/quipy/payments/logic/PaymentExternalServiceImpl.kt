@@ -237,8 +237,9 @@ class PaymentExternalSystemAdapterImpl(
 
     // private val client = OkHttpClient.Builder().build()
 
+    val requestTimeout = Duration.ofMillis(2500)
     private val client = OkHttpClient.Builder()
-         .callTimeout((requestAverageProcessingTime.toMillis() * 1.1).toLong(), TimeUnit.MILLISECONDS)
+         .callTimeout((requestTimeout).toMillis(), TimeUnit.MILLISECONDS)
 //         .callTimeout(8, TimeUnit.SECONDS)
         // .readTimeout(10, TimeUnit.SECONDS)
         // .connectTimeout(5, TimeUnit.SECONDS)
@@ -292,12 +293,12 @@ class PaymentExternalSystemAdapterImpl(
 
         var attempt = 0
         val maxRetries = 3
-        var delay = 80L
+        var delay = 50L
 
         while (attempt < maxRetries) {
             limiter.tickBlocking()
             val httpRequest = Request.Builder().run {
-                val requestTimeout = Duration.ofMillis(1250)
+
                 url("http://localhost:1234/external/process?serviceName=${serviceName}&accountName=${accountName}&transactionId=$transactionId&paymentId=${request.paymentId}&amount=${request.amount}&timeout=${requestTimeout}")
                 post(emptyBody)
             }.build()
