@@ -204,6 +204,11 @@ import java.util.concurrent.TimeoutException
 import kotlin.math.abs
 import kotlin.math.min
 
+//{
+//    "ratePerSecond": 7,
+//    "testCount": 800,
+//    "processingTimeMillis": 3500
+//}
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -222,7 +227,7 @@ class PaymentExternalSystemAdapterImpl(
     private val accountName = properties.accountName
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
-    // private val parallelRequests = properties.parallelRequests
+//     private val parallelRequests = properties.parallelRequests
     private val parallelRequests = 30 // Увеличенное значение для параллельных запросов
 
     private val requestQueue = ConcurrentLinkedQueue<PaymentRequest>()
@@ -233,8 +238,8 @@ class PaymentExternalSystemAdapterImpl(
     // private val client = OkHttpClient.Builder().build()
 
     private val client = OkHttpClient.Builder()
-        // .callTimeout((requestAverageProcessingTime.toMillis() * 1.1).toLong(), TimeUnit.MILLISECONDS)
-        // .callTimeout(8, TimeUnit.SECONDS)
+         .callTimeout((requestAverageProcessingTime.toMillis() * 1.1).toLong(), TimeUnit.MILLISECONDS)
+//         .callTimeout(8, TimeUnit.SECONDS)
         // .readTimeout(10, TimeUnit.SECONDS)
         // .connectTimeout(5, TimeUnit.SECONDS)
         // .writeTimeout(5, TimeUnit.SECONDS)
@@ -260,9 +265,9 @@ class PaymentExternalSystemAdapterImpl(
 
     private suspend fun executePaymentWithTimeout(request: PaymentRequest) {
         try {
-            withTimeout(Duration.ofSeconds(8).toMillis()) {
+//            withTimeout(Duration.ofSeconds(8).toMillis()) {
                 executePayment(request)
-            }
+//            }
         } catch (e: TimeoutCancellationException) {
             logger.error("[$accountName] Request timed out for payment ${request.paymentId}", e)
             paymentESService.update(request.paymentId) {
