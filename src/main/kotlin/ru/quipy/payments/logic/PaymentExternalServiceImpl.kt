@@ -237,7 +237,7 @@ class PaymentExternalSystemAdapterImpl(
 
     // private val client = OkHttpClient.Builder().build()
 
-    val requestTimeout = Duration.ofMillis(2500)
+    val requestTimeout = Duration.ofMillis(requestAverageProcessingTime.toMillis() * 2)
     private val client = OkHttpClient.Builder()
          .callTimeout((requestTimeout).toMillis(), TimeUnit.MILLISECONDS)
 //         .callTimeout(8, TimeUnit.SECONDS)
