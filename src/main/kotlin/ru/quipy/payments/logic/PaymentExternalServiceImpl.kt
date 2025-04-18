@@ -26,11 +26,6 @@ class PaymentExternalSystemAdapterImpl(
 
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
-
-        private const val THREAD_SLEEP_MILLIS = 5L
-        private const val PROCESSING_TIME_MILLIS = 6000
-        private const val MAX_RETRY_COUNT = 4
-        private const val MAX_PAYMENT_REQUEST_DURATION = 1500L
     }
 
     private val serviceName = properties.serviceName
@@ -40,10 +35,8 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    val responseTimes = ConcurrentLinkedQueue<Long>()
-
     private val client = HttpClient.newBuilder()
-        .connectTimeout(requestTimeout)
+        // .connectTimeout(requestTimeout)
         .version(HttpClient.Version.HTTP_2)
         .build()
 
@@ -68,23 +61,6 @@ class PaymentExternalSystemAdapterImpl(
             it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
         }
 
-        tryPerformPayment(paymentId, transactionId, amount, deadline, 0)
-    }
-
-    private fun tryPerformPayment(
-        paymentId: UUID,
-        transactionId: UUID,
-        amount: Int,
-        deadline: Long,
-        attempt: Int
-    ) {
-        if (!rateLimiter.tick() || !semaphore.tryAcquire()) {
-            CompletableFuture.delayedExecutor(1, TimeUnit.MILLISECONDS).execute {
-                tryPerformPayment(paymentId, transactionId, amount, deadline, attempt)
-            }
-            return
-        }
-
         val uri = URI.create(
             "http://localhost:1234/external/process?serviceName=$serviceName&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"
         )
@@ -95,44 +71,31 @@ class PaymentExternalSystemAdapterImpl(
             .POST(HttpRequest.BodyPublishers.noBody())
             .build()
 
-        client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-            .whenComplete { response, ex ->
-                semaphore.release()
-
-                if (ex != null) {
-                    val reason = when (ex) {
-                        is HttpTimeoutException -> "Request timeout"
-                        else -> ex.message ?: "Unknown error"
-                    }
-
-                    logger.error("[$accountName] Payment failed: $reason", ex)
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason)
-                    }
-
-                    if (attempt < MAX_RETRY_COUNT) {
-                        tryPerformPayment(paymentId, transactionId, amount, deadline, attempt + 1)
-                    }
-
-                    return@whenComplete
+        client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).whenComplete { response, ex ->
+            if (ex != null) {
+                val reason = when (ex) {
+                    is HttpTimeoutException -> "Request timeout"
+                    else -> ex.message ?: "Unknown error"
                 }
 
-                val responseBody = response.body()
-                val body = try {
-                    mapper.readValue(responseBody, ExternalSysResponse::class.java)
-                } catch (e: Exception) {
-                    logger.error("[$accountName] Failed to parse response: $responseBody", e)
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, "Parse error")
-                }
-
+                logger.error("[$accountName] Payment failed: $reason", ex)
                 paymentESService.update(paymentId) {
-                    it.logProcessing(body.result, now(), transactionId, body.message)
+                    it.logProcessing(false, now(), transactionId, reason)
                 }
-
-                if (!body.result && attempt < MAX_RETRY_COUNT) {
-                    tryPerformPayment(paymentId, transactionId, amount, deadline, attempt + 1)
-                }
+                return@whenComplete
             }
+
+            val body = try {
+                mapper.readValue(response.body(), ExternalSysResponse::class.java)
+            } catch (e: Exception) {
+                logger.error("[$accountName] Failed to parse response: ${response.body()}", e)
+                ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, "Parse error")
+            }
+
+            paymentESService.update(paymentId) {
+                it.logProcessing(body.result, now(), transactionId, body.message)
+            }
+        }
     }
 
     override fun price() = properties.price
